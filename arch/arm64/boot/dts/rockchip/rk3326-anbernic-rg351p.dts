@@ -43,26 +43,24 @@
 
 	rk817-sound {
 		compatible = "simple-audio-card";
-		simple-audio-card,name = "Analog";
 		simple-audio-card,format = "i2s";
-		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_HIGH>;
+		simple-audio-card,name = "rockchip,rk817-codec";
 		simple-audio-card,mclk-fs = <256>;
 		simple-audio-card,widgets =
 			"Microphone", "Mic Jack",
-			"Headphone", "Headphones",
-			"Speaker", "Speaker";
+			"Headphone", "Headphone Jack";
 		simple-audio-card,routing =
-			"MICL", "Mic Jack",
-			"Headphones", "HPOL",
-			"Headphones", "HPOR",
-			"Speaker", "SPKO";
-
-		simple-audio-card,codec {
-			sound-dai = <&rk817>;
-		};
-
+			"MIC_IN", "Mic Jack",
+			/*"IN1P", "Mic Jack",*/
+			"Headphone Jack", "HPOL",
+			"Headphone Jack", "HPOR";
+		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
+		simple-audio-card,codec-hp-det = <1>;
 		simple-audio-card,cpu {
 			sound-dai = <&i2s1_2ch>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&rk817_codec>;
 		};
 	};
 
@@ -362,6 +360,15 @@
 
 		rk817_codec: codec {
 			rockchip,mic-in-differential;
+			#sound-dai-cells = <0>;
+			compatible = "rockchip,rk817-codec";
+			clocks = <&cru SCLK_I2S1_OUT>;
+			clock-names = "mclk";
+			pinctrl-names = "default";
+			pinctrl-0 = <&i2s1_2ch_mclk>;
+			hp-volume = <0>;
+			spk-volume = <3>;
+			status = "okay";
 		};
 	};
 };
