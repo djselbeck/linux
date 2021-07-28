@@ -11,8 +11,8 @@
 #include "rk3326.dtsi"
 
 / {
-	model = "ODROID-GO Advance";
-	compatible = "hardkernel,rk3326-odroid-go2", "rockchip,rk3326";
+	model = "Anbernic rg351";
+	compatible = "anbernic,rk3326-rg351", "rockchip,rk3326";
 
 	aliases {
 		mmc0 = &sdmmc;
@@ -191,7 +191,7 @@
 		vcc5-supply = <&vccsys>;
 		vcc6-supply = <&vccsys>;
 		vcc7-supply = <&vccsys>;
-		vcc8-supply = <&vccsys>;
+		vcc8-supply = <&vcc_host>;
 		vcc9-supply = <&dcdc_boost>;
 
 		regulators {
