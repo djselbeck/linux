@@ -43,24 +43,26 @@
 
 	rk817-sound {
 		compatible = "simple-audio-card";
+		simple-audio-card,name = "Analog";
 		simple-audio-card,format = "i2s";
-		simple-audio-card,name = "rockchip,rk817-codec";
+		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_HIGH>;
 		simple-audio-card,mclk-fs = <256>;
 		simple-audio-card,widgets =
 			"Microphone", "Mic Jack",
-			"Headphone", "Headphone Jack";
+			"Headphone", "Headphones",
+			"Speaker", "Speaker";
 		simple-audio-card,routing =
-			"MIC_IN", "Mic Jack",
-			/*"IN1P", "Mic Jack",*/
-			"Headphone Jack", "HPOL",
-			"Headphone Jack", "HPOR";
-		simple-audio-card,hp-det-gpio = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
-		simple-audio-card,codec-hp-det = <1>;
+			"MICL", "Mic Jack",
+			"Headphones", "HPOL",
+			"Headphones", "HPOR",
+			"Speaker", "SPKO";
+
+		simple-audio-card,codec {
+			sound-dai = <&rk817>;
+		};
+
 		simple-audio-card,cpu {
 			sound-dai = <&i2s1_2ch>;
-		};
-		simple-audio-card,codec {
-			sound-dai = <&rk817_codec>;
 		};
 	};
 
