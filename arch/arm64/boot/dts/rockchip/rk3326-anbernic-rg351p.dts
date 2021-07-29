@@ -28,6 +28,25 @@
 		pwms = <&pwm1 0 25000 0>;
 	};
 
+	battery_cell: battery-cell {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <3000000>;
+		charge-term-current-microamp = <300000>;
+		constant-charge-current-max-microamp = <2000000>;
+		constant-charge-voltage-max-microvolt = <4200000>;
+		factory-internal-resistance-micro-ohms = <180000>;
+		voltage-max-design-microvolt = <4100000>;
+		voltage-min-design-microvolt = <3500000>;
+
+		ocv-capacity-celsius = <20>;
+		ocv-capacity-table-0 =	<4158000 100>, <4113000 95>, <4070000 90>, <3984000 85>,
+					<3941000 80>, <3898000 75>, <3855000 70>, <3812000 65>,
+					<3769000 60>, <3726000 55>, <3683000 50>, <3640000 45>,
+					<3774000 40>, <3726000 35>, <3683000 30>, <3640001 25>,
+					<3468000 20>, <3426000 15>, <3384000 10>, <3342000 5>,
+					<3300000 0>;
+	};
+
 
 	leds: gpio-leds {
 		compatible = "gpio-leds";
@@ -358,6 +377,13 @@
 				regulator-boot-on;
 				regulator-name = "otg_switch";
 			};
+		};
+
+		rk817_battery: battery {
+			monitored-battery = <&battery_cell>;
+			rockchip,resistor-sense = <10000>;
+			rockchip,sleep-enter-current = <300000>;
+			rockchip,sleep-filter-current = <100000>;
 		};
 
 		rk817_codec: codec {
