@@ -111,6 +111,11 @@
 	};
 };
 
+&ring_indicator {
+	gpios = <&pio 1 2 GPIO_ACTIVE_LOW>; /* PB2 */
+};
+
+
 &hdmi {
 	extcon = <&anx7688 0>;
 };
