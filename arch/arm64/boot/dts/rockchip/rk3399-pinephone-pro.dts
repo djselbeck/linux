@@ -457,6 +457,7 @@
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
 		vin-supply = <&vcc5v0_sys>;
+		regulator-always-on;
 	};
 
 	vcc_4g: vcc-4g {
@@ -469,6 +470,7 @@
 		regulator-min-microvolt = <3800000>;
 		regulator-max-microvolt = <3800000>;
 		vin-supply = <&vcc_sysin>;
+		regulator-always-on;
 	};
 
 	vcc1v8_codec: vcc1v8-codec-regulator {
