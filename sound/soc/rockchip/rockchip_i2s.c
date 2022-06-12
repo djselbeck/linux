@@ -53,6 +53,7 @@ struct rk_i2s_dev {
 	bool is_master_mode;
 	const struct rk_i2s_pins *pins;
 	unsigned int bclk_ratio;
+	unsigned int freq;
 	spinlock_t lock; /* tx/rx lock */
 };
 
@@ -83,6 +84,19 @@ static int i2s_runtime_resume(struct device *dev)
 	ret = regcache_sync(i2s->regmap);
 	if (ret)
 		clk_disable_unprepare(i2s->mclk);
+
+
+	if (i2s->freq) {
+		ret = clk_set_rate(i2s->mclk, i2s->freq-100);
+		if (ret)
+			dev_err(i2s->dev, "Fail to set mclk %d\n", ret);
+
+		dev_dbg(i2s->dev, "Set clk to %u",i2s->freq-100);
+		ret = clk_set_rate(i2s->mclk, i2s->freq);
+		if (ret)
+			dev_err(i2s->dev, "Fail to set mclk %d\n", ret);
+		dev_dbg(i2s->dev, "Set clk to %u",i2s->freq);
+	}
 
 	return ret;
 }
@@ -460,6 +474,7 @@ static int rockchip_i2s_set_sysclk(struct snd_soc_dai *cpu_dai, int clk_id,
 {
 	struct rk_i2s_dev *i2s = to_info(cpu_dai);
 	int ret;
+	dev_dbg(i2s->dev, "Set clock to %u\n", freq);
 
 	if (freq == 0)
 		return 0;
@@ -467,6 +482,8 @@ static int rockchip_i2s_set_sysclk(struct snd_soc_dai *cpu_dai, int clk_id,
 	ret = clk_set_rate(i2s->mclk, freq);
 	if (ret)
 		dev_err(i2s->dev, "Fail to set mclk %d\n", ret);
+
+	i2s->freq = freq;
 
 	return ret;
 }
