@@ -983,7 +983,7 @@
 		reg = <0x48>;
 		interrupt-parent = <&gpio4>;
 		interrupts = <RK_PD3 IRQ_TYPE_EDGE_FALLING>;
-		proximity-near-level = <32>;
+		proximity-near-level = <50>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&stk3311_int>;
 		vdd-supply = <&vcc_3v0>;
