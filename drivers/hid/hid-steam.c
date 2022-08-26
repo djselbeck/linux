@@ -42,6 +42,9 @@
 #include <linux/rcupdate.h>
 #include <linux/delay.h>
 #include <linux/power_supply.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
+#include <linux/delay.h>
 #include "hid-ids.h"
 
 MODULE_LICENSE("GPL");
@@ -54,6 +57,7 @@ static LIST_HEAD(steam_devices);
 
 #define STEAM_QUIRK_WIRELESS		BIT(0)
 
+int lizard_reset_fn (void *data);
 /* Touch pads are 40 mm in diameter and 65535 units */
 #define STEAM_PAD_RESOLUTION 1638
 /* Trigger runs are about 5 mm and 256 units */
@@ -97,6 +101,7 @@ static LIST_HEAD(steam_devices);
 #define STEAM_EV_INPUT_DATA		0x01
 #define STEAM_EV_CONNECT		0x03
 #define STEAM_EV_BATTERY		0x04
+#define STEAM_DECK_EV_INPUT_DATA	0x09
 
 /* Values for GYRO_MODE (bitmask) */
 #define STEAM_GYRO_MODE_OFF		0x0000
@@ -124,6 +129,9 @@ struct steam_device {
 	struct power_supply __rcu *battery;
 	u8 battery_charge;
 	u16 voltage;
+	bool steamdeck;
+	bool device_open;
+	struct task_struct *lizard_reset;
 };
 
 static int steam_recv_report(struct steam_device *steam,
@@ -160,21 +168,31 @@ static int steam_send_report(struct steam_device *steam,
 		u8 *cmd, int size)
 {
 	struct hid_report *r;
+	u32 len;
 	u8 *buf;
 	unsigned int retries = 50;
 	int ret;
 
 	r = steam->hdev->report_enum[HID_FEATURE_REPORT].report_id_hash[0];
-	if (hid_report_len(r) < 64)
+	len = hid_report_len(r);
+	//pr_info("steam_send_report size=%x, hid_length=%lx\n", size, len);
+	if (len < 64)
 		return -EINVAL;
 
 	buf = hid_alloc_report_buf(r, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
+	memset(buf, 0, len);
 	/* The report ID is always 0 */
 	memcpy(buf + 1, cmd, size);
-
+/*
+	for (size_t i = 0; i < len; i++) {
+		if (i % 8 == 0)
+			pr_info("\n");
+		pr_cont("%x,",buf[i]);
+	}
+	pr_info("\n");*/
 	/*
 	 * Sometimes the wireless controller fails with EPIPE
 	 * when sending a feature report.
@@ -183,7 +201,7 @@ static int steam_send_report(struct steam_device *steam,
 	 */
 	do {
 		ret = hid_hw_raw_request(steam->hdev, 0,
-				buf, size + 1,
+				buf, len,
 				HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 		if (ret != -EPIPE)
 			break;
@@ -262,7 +280,12 @@ static inline int steam_request_conn_status(struct steam_device *steam)
 
 static void steam_set_lizard_mode(struct steam_device *steam, bool enable)
 {
+	pr_info("Set lizard=%d\n", enable);
 	if (enable) {
+		if (steam->lizard_reset) {
+			kthread_stop(steam->lizard_reset);
+			steam->lizard_reset = NULL;
+		}
 		/* enable esc, enter, cursors */
 		steam_send_report_byte(steam, STEAM_CMD_DEFAULT_MAPPINGS);
 		/* enable mouse */
@@ -277,17 +300,41 @@ static void steam_set_lizard_mode(struct steam_device *steam, bool enable)
 			STEAM_REG_RPAD_MODE, 0x07, /* disable mouse */
 			STEAM_REG_RPAD_MARGIN, 0x00, /* disable margin */
 			0);
+
+		if (steam->lizard_reset)
+			return;
+		steam->lizard_reset = kthread_create(lizard_reset_fn, (void*)steam, "lizard_reset");
+		if (IS_ERR(steam->lizard_reset)) {
+			steam->lizard_reset = NULL;
+			return;
+		}
+
+		wake_up_process(steam->lizard_reset);
 	}
+}
+
+int lizard_reset_fn (void *data) {
+	struct steam_device *steam = (struct steam_device*)data;
+	while (steam->device_open) {
+		pr_info("Retrigger lizard deactivation\n");
+		mutex_lock(&steam->mutex);
+		steam_set_lizard_mode(steam, false);
+		mutex_unlock(&steam->mutex);
+		msleep(1000);
+	}
+	return 0;
 }
 
 static int steam_input_open(struct input_dev *dev)
 {
 	struct steam_device *steam = input_get_drvdata(dev);
-
+	pr_info("STEAM OPEN\n");
+	steam->device_open = 1;
 	mutex_lock(&steam->mutex);
 	if (!steam->client_opened && lizard_mode)
 		steam_set_lizard_mode(steam, false);
 	mutex_unlock(&steam->mutex);
+
 	return 0;
 }
 
@@ -295,6 +342,8 @@ static void steam_input_close(struct input_dev *dev)
 {
 	struct steam_device *steam = input_get_drvdata(dev);
 
+	pr_info("STEAM CLOSE\n");
+	steam->device_open = 0;
 	mutex_lock(&steam->mutex);
 	if (!steam->client_opened && lizard_mode)
 		steam_set_lizard_mode(steam, true);
@@ -413,48 +462,103 @@ static int steam_input_register(struct steam_device *steam)
 	input->id.product = hdev->product;
 	input->id.version = hdev->version;
 
-	input_set_capability(input, EV_KEY, BTN_TR2);
-	input_set_capability(input, EV_KEY, BTN_TL2);
-	input_set_capability(input, EV_KEY, BTN_TR);
-	input_set_capability(input, EV_KEY, BTN_TL);
-	input_set_capability(input, EV_KEY, BTN_Y);
-	input_set_capability(input, EV_KEY, BTN_B);
-	input_set_capability(input, EV_KEY, BTN_X);
-	input_set_capability(input, EV_KEY, BTN_A);
-	input_set_capability(input, EV_KEY, BTN_DPAD_UP);
-	input_set_capability(input, EV_KEY, BTN_DPAD_RIGHT);
-	input_set_capability(input, EV_KEY, BTN_DPAD_LEFT);
-	input_set_capability(input, EV_KEY, BTN_DPAD_DOWN);
-	input_set_capability(input, EV_KEY, BTN_SELECT);
-	input_set_capability(input, EV_KEY, BTN_MODE);
-	input_set_capability(input, EV_KEY, BTN_START);
-	input_set_capability(input, EV_KEY, BTN_GEAR_DOWN);
-	input_set_capability(input, EV_KEY, BTN_GEAR_UP);
-	input_set_capability(input, EV_KEY, BTN_THUMBR);
-	input_set_capability(input, EV_KEY, BTN_THUMBL);
-	input_set_capability(input, EV_KEY, BTN_THUMB);
-	input_set_capability(input, EV_KEY, BTN_THUMB2);
+	if (!steam->steamdeck) {
+		input_set_capability(input, EV_KEY, BTN_TR2);
+		input_set_capability(input, EV_KEY, BTN_TL2);
+		input_set_capability(input, EV_KEY, BTN_TR);
+		input_set_capability(input, EV_KEY, BTN_TL);
+		input_set_capability(input, EV_KEY, BTN_Y);
+		input_set_capability(input, EV_KEY, BTN_B);
+		input_set_capability(input, EV_KEY, BTN_X);
+		input_set_capability(input, EV_KEY, BTN_A);
+		input_set_capability(input, EV_KEY, BTN_DPAD_UP);
+		input_set_capability(input, EV_KEY, BTN_DPAD_RIGHT);
+		input_set_capability(input, EV_KEY, BTN_DPAD_LEFT);
+		input_set_capability(input, EV_KEY, BTN_DPAD_DOWN);
+		input_set_capability(input, EV_KEY, BTN_SELECT);
+		input_set_capability(input, EV_KEY, BTN_MODE);
+		input_set_capability(input, EV_KEY, BTN_START);
+		input_set_capability(input, EV_KEY, BTN_GEAR_DOWN);
+		input_set_capability(input, EV_KEY, BTN_GEAR_UP);
+		input_set_capability(input, EV_KEY, BTN_THUMBR);
+		input_set_capability(input, EV_KEY, BTN_THUMBL);
+		input_set_capability(input, EV_KEY, BTN_THUMB);
+		input_set_capability(input, EV_KEY, BTN_THUMB2);
 
-	input_set_abs_params(input, ABS_HAT2Y, 0, 255, 0, 0);
-	input_set_abs_params(input, ABS_HAT2X, 0, 255, 0, 0);
-	input_set_abs_params(input, ABS_X, -32767, 32767, 0, 0);
-	input_set_abs_params(input, ABS_Y, -32767, 32767, 0, 0);
-	input_set_abs_params(input, ABS_RX, -32767, 32767,
-			STEAM_PAD_FUZZ, 0);
-	input_set_abs_params(input, ABS_RY, -32767, 32767,
-			STEAM_PAD_FUZZ, 0);
-	input_set_abs_params(input, ABS_HAT0X, -32767, 32767,
-			STEAM_PAD_FUZZ, 0);
-	input_set_abs_params(input, ABS_HAT0Y, -32767, 32767,
-			STEAM_PAD_FUZZ, 0);
-	input_abs_set_res(input, ABS_X, STEAM_JOYSTICK_RESOLUTION);
-	input_abs_set_res(input, ABS_Y, STEAM_JOYSTICK_RESOLUTION);
-	input_abs_set_res(input, ABS_RX, STEAM_PAD_RESOLUTION);
-	input_abs_set_res(input, ABS_RY, STEAM_PAD_RESOLUTION);
-	input_abs_set_res(input, ABS_HAT0X, STEAM_PAD_RESOLUTION);
-	input_abs_set_res(input, ABS_HAT0Y, STEAM_PAD_RESOLUTION);
-	input_abs_set_res(input, ABS_HAT2Y, STEAM_TRIGGER_RESOLUTION);
-	input_abs_set_res(input, ABS_HAT2X, STEAM_TRIGGER_RESOLUTION);
+		input_set_abs_params(input, ABS_HAT2Y, 0, 255, 0, 0);
+		input_set_abs_params(input, ABS_HAT2X, 0, 255, 0, 0);
+		input_set_abs_params(input, ABS_X, -32767, 32767, 0, 0);
+		input_set_abs_params(input, ABS_Y, -32767, 32767, 0, 0);
+		input_set_abs_params(input, ABS_RX, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_RY, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_HAT0X, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_HAT0Y, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_abs_set_res(input, ABS_X, STEAM_JOYSTICK_RESOLUTION);
+		input_abs_set_res(input, ABS_Y, STEAM_JOYSTICK_RESOLUTION);
+		input_abs_set_res(input, ABS_RX, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_RY, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT0X, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT0Y, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT2Y, STEAM_TRIGGER_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT2X, STEAM_TRIGGER_RESOLUTION);
+	} else {
+		input_set_capability(input, EV_KEY, BTN_TR2);
+		input_set_capability(input, EV_KEY, BTN_TL2);
+		input_set_capability(input, EV_KEY, BTN_TR);
+		input_set_capability(input, EV_KEY, BTN_TL);
+		input_set_capability(input, EV_KEY, BTN_Y);
+		input_set_capability(input, EV_KEY, BTN_B);
+		input_set_capability(input, EV_KEY, BTN_X);
+		input_set_capability(input, EV_KEY, BTN_A);
+		input_set_capability(input, EV_KEY, BTN_DPAD_UP);
+		input_set_capability(input, EV_KEY, BTN_DPAD_RIGHT);
+		input_set_capability(input, EV_KEY, BTN_DPAD_LEFT);
+		input_set_capability(input, EV_KEY, BTN_DPAD_DOWN);
+		input_set_capability(input, EV_KEY, BTN_SELECT);
+		input_set_capability(input, EV_KEY, BTN_MODE);
+		input_set_capability(input, EV_KEY, BTN_START);
+		input_set_capability(input, EV_KEY, BTN_GEAR_DOWN);
+		input_set_capability(input, EV_KEY, BTN_GEAR_UP);
+		input_set_capability(input, EV_KEY, BTN_THUMBR);
+		input_set_capability(input, EV_KEY, BTN_THUMBL);
+		input_set_capability(input, EV_KEY, BTN_THUMB);
+		input_set_capability(input, EV_KEY, BTN_THUMB2);
+		input_set_capability(input, EV_KEY, BTN_BASE);
+		input_set_capability(input, EV_KEY, BTN_BASE2);
+		input_set_capability(input, EV_KEY, BTN_MISC);
+
+		input_set_abs_params(input, ABS_Z, 0, 32767, 0, 0);
+		input_set_abs_params(input, ABS_RZ, 0, 32767, 0, 0);
+		input_set_abs_params(input, ABS_X, -32767, 32767, 0, 0);
+		input_set_abs_params(input, ABS_Y, -32767, 32767, 0, 0);
+		input_set_abs_params(input, ABS_RX, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_RY, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_HAT0X, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_HAT0Y, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_HAT1X, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_set_abs_params(input, ABS_HAT1Y, -32767, 32767,
+				STEAM_PAD_FUZZ, 0);
+		input_abs_set_res(input, ABS_HAT0X, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT0Y, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT1X, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_HAT1Y, STEAM_PAD_RESOLUTION);
+		input_abs_set_res(input, ABS_X, STEAM_JOYSTICK_RESOLUTION);
+		input_abs_set_res(input, ABS_Y, STEAM_JOYSTICK_RESOLUTION);
+		input_abs_set_res(input, ABS_RX, STEAM_JOYSTICK_RESOLUTION);
+		input_abs_set_res(input, ABS_RY, STEAM_JOYSTICK_RESOLUTION);
+
+		input_abs_set_res(input, ABS_Z, STEAM_TRIGGER_RESOLUTION);
+		input_abs_set_res(input, ABS_RZ, STEAM_TRIGGER_RESOLUTION);
+	}
 
 	ret = input_register_device(input);
 	if (ret)
@@ -660,6 +764,16 @@ static int steam_client_ll_raw_request(struct hid_device *hdev,
 {
 	struct steam_device *steam = hdev->driver_data;
 
+	if (1 || reqtype != 9) {
+		hid_info(hdev, "raw_request, report_type=%x reqtype=%x count=%lx\n", report_type, reqtype, count);
+
+		for (size_t i = 0; i < count; i++) {
+			pr_cont("%x,",buf[i]);
+			if (i % 8 == 0)
+				pr_info("\n");
+		}
+	}
+		
 	return hid_hw_raw_request(steam->hdev, reportnum, buf, count,
 			report_type, reqtype);
 }
@@ -733,6 +847,10 @@ static int steam_probe(struct hid_device *hdev,
 		ret = -ENOMEM;
 		goto steam_alloc_fail;
 	}
+
+	if (id->product == USB_DEVICE_ID_STEAM_DECK_CONTROLLER)
+		steam->steamdeck = 1;
+
 	steam->hdev = hdev;
 	hid_set_drvdata(hdev, steam);
 	spin_lock_init(&steam->lock);
@@ -918,13 +1036,17 @@ static void steam_do_input_event(struct steam_device *steam,
 		struct input_dev *input, u8 *data)
 {
 	/* 24 bits of buttons */
-	u8 b8, b9, b10;
+	u8 b8, b9, b10, b11, b12, b13, b14;
 	s16 x, y;
 	bool lpad_touched, lpad_and_joy;
 
 	b8 = data[8];
 	b9 = data[9];
 	b10 = data[10];
+	b11 = data[11];
+	b12 = data[12];
+	b13 = data[13];
+	b14 = data[14];
 
 	input_report_abs(input, ABS_HAT2Y, data[11]);
 	input_report_abs(input, ABS_HAT2X, data[12]);
@@ -957,29 +1079,103 @@ static void steam_do_input_event(struct steam_device *steam,
 
 	input_report_abs(input, ABS_RX, steam_le16(data + 20));
 	input_report_abs(input, ABS_RY, -steam_le16(data + 22));
-
+	input_event(input, EV_KEY, BTN_THUMB, lpad_touched || lpad_and_joy);
 	input_event(input, EV_KEY, BTN_TR2, !!(b8 & BIT(0)));
 	input_event(input, EV_KEY, BTN_TL2, !!(b8 & BIT(1)));
 	input_event(input, EV_KEY, BTN_TR, !!(b8 & BIT(2)));
 	input_event(input, EV_KEY, BTN_TL, !!(b8 & BIT(3)));
-	input_event(input, EV_KEY, BTN_Y, !!(b8 & BIT(4)));
-	input_event(input, EV_KEY, BTN_B, !!(b8 & BIT(5)));
-	input_event(input, EV_KEY, BTN_X, !!(b8 & BIT(6)));
-	input_event(input, EV_KEY, BTN_A, !!(b8 & BIT(7)));
-	input_event(input, EV_KEY, BTN_SELECT, !!(b9 & BIT(4)));
-	input_event(input, EV_KEY, BTN_MODE, !!(b9 & BIT(5)));
-	input_event(input, EV_KEY, BTN_START, !!(b9 & BIT(6)));
 	input_event(input, EV_KEY, BTN_GEAR_DOWN, !!(b9 & BIT(7)));
 	input_event(input, EV_KEY, BTN_GEAR_UP, !!(b10 & BIT(0)));
 	input_event(input, EV_KEY, BTN_THUMBR, !!(b10 & BIT(2)));
 	input_event(input, EV_KEY, BTN_THUMBL, !!(b10 & BIT(6)));
-	input_event(input, EV_KEY, BTN_THUMB, lpad_touched || lpad_and_joy);
 	input_event(input, EV_KEY, BTN_THUMB2, !!(b10 & BIT(4)));
+
+	input_event(input, EV_KEY, BTN_SELECT, !!(b9 & BIT(4)));
+	input_event(input, EV_KEY, BTN_MODE, !!(b9 & BIT(5)));
+	input_event(input, EV_KEY, BTN_START, !!(b9 & BIT(6)));
+	input_event(input, EV_KEY, BTN_Y, !!(b8 & BIT(4)));
+	input_event(input, EV_KEY, BTN_B, !!(b8 & BIT(5)));
+	input_event(input, EV_KEY, BTN_X, !!(b8 & BIT(6)));
+	input_event(input, EV_KEY, BTN_A, !!(b8 & BIT(7)));
 	input_event(input, EV_KEY, BTN_DPAD_UP, !!(b9 & BIT(0)));
 	input_event(input, EV_KEY, BTN_DPAD_RIGHT, !!(b9 & BIT(1)));
 	input_event(input, EV_KEY, BTN_DPAD_LEFT, !!(b9 & BIT(2)));
 	input_event(input, EV_KEY, BTN_DPAD_DOWN, !!(b9 & BIT(3)));
 
+	input_sync(input);
+}
+
+static void steam_deck_do_input_event(struct steam_device *steam,
+		struct input_dev *input, u8 *data)
+{
+	/* 24 bits of buttons */
+	u8 b8, b9, b10, b11, b12, b13, b14;
+	s16 x, y;
+	bool lpad_touched, lpad_and_joy;
+
+	b8 = data[8];
+	b9 = data[9];
+	b10 = data[10];
+	b11 = data[11];
+	b12 = data[12];
+	b13 = data[13];
+	b14 = data[14];
+
+	/* Left analog joystick */
+	input_report_abs(input, ABS_X, steam_le16(data + 48));
+	input_report_abs(input, ABS_Y, -steam_le16(data + 50));
+	
+	/* Right analog joystick */
+	input_report_abs(input, ABS_RX, steam_le16(data + 52));
+	input_report_abs(input, ABS_RY, -steam_le16(data + 54));
+
+	/* Left touchpad */
+	input_report_abs(input, ABS_HAT0X, steam_le16(data + 16));
+	input_report_abs(input, ABS_HAT0Y, -steam_le16(data + 18));
+
+	/* Right touchpad */
+	input_report_abs(input, ABS_HAT1X, steam_le16(data + 20));
+	input_report_abs(input, ABS_HAT1Y, -steam_le16(data + 22));
+	
+	/* Trigger */
+	input_report_abs(input, ABS_Z, steam_le16(data + 44));
+	input_report_abs(input, ABS_RZ, steam_le16(data + 46));
+	
+	input_event(input, EV_KEY, BTN_TR2, !!(b8 & BIT(0)));
+	input_event(input, EV_KEY, BTN_TL2, !!(b8 & BIT(1)));
+	input_event(input, EV_KEY, BTN_TR, !!(b8 & BIT(2)));
+	input_event(input, EV_KEY, BTN_TL, !!(b8 & BIT(3)));
+	input_event(input, EV_KEY, BTN_SELECT, !!(b9 & BIT(4)));
+	input_event(input, EV_KEY, BTN_MODE, !!(b9 & BIT(5)));
+	input_event(input, EV_KEY, BTN_START, !!(b9 & BIT(6)));
+	input_event(input, EV_KEY, BTN_THUMBR, !!(b11 & BIT(2)));
+	input_event(input, EV_KEY, BTN_THUMBL, !!(b10 & BIT(6)));
+	input_event(input, EV_KEY, BTN_THUMB, !!(b10 & BIT(1)));
+	input_event(input, EV_KEY, BTN_THUMB2, !!(b10 & BIT(2)));
+
+	input_event(input, EV_KEY, BTN_SELECT, !!(b9 & BIT(4)));
+	input_event(input, EV_KEY, BTN_MODE, !!(b9 & BIT(5)));
+	input_event(input, EV_KEY, BTN_START, !!(b9 & BIT(6)));
+	input_event(input, EV_KEY, BTN_Y, !!(b8 & BIT(4)));
+	input_event(input, EV_KEY, BTN_B, !!(b8 & BIT(5)));
+	input_event(input, EV_KEY, BTN_X, !!(b8 & BIT(6)));
+	input_event(input, EV_KEY, BTN_A, !!(b8 & BIT(7)));
+	input_event(input, EV_KEY, BTN_DPAD_UP, !!(b9 & BIT(0)));
+	input_event(input, EV_KEY, BTN_DPAD_RIGHT, !!(b9 & BIT(1)));
+	input_event(input, EV_KEY, BTN_DPAD_LEFT, !!(b9 & BIT(2)));
+	input_event(input, EV_KEY, BTN_DPAD_DOWN, !!(b9 & BIT(3)));
+
+	/* Back button lower left L5 */
+	input_event(input, EV_KEY, BTN_GEAR_DOWN, !!(b9 & BIT(7)));
+	/* Back button lower right R5 */
+	input_event(input, EV_KEY, BTN_GEAR_UP, !!(b10 & BIT(0)));
+	/* Back button upper left L4 */
+	input_event(input, EV_KEY, BTN_BASE, !!(b13 & BIT(1)));
+	/* Back button upper right R4 */
+	input_event(input, EV_KEY, BTN_BASE2, !!(b13 & BIT(2)));
+
+	/* Menu botton right (3 dots) */
+	input_event(input, EV_KEY, BTN_MISC, !!(b14 & BIT(2)));
 	input_sync(input);
 }
 
@@ -1044,13 +1240,38 @@ static int steam_raw_event(struct hid_device *hdev,
 	 *  0x04: battery status (11 bytes)
 	 */
 
-	if (size != 64 || data[0] != 1 || data[1] != 0)
+	if (size != 64 || data[0] != 1 || data[1] != 0) {
+		hid_info(hdev, "Can_t use it\n");
 		return 0;
+	}
 
+	if (data[2] != 9)
+		hid_info(hdev, "size=%lx, %x,%x,%x\n", size, data[0], data[1], data[2]);
 	switch (data[2]) {
+	case STEAM_DECK_EV_INPUT_DATA:
+		if (steam->client_opened)
+			return 0;
+		pr_info("Event:\n");
+		for (size_t i = 0; i < 64; i++) {
+			pr_cont("%x,",data[i]);
+			if ((i+1) % 8 == 0)
+				pr_cont("\n");
+		}
+		rcu_read_lock();
+		input = rcu_dereference(steam->input);
+		if (likely(input))
+			steam_deck_do_input_event(steam, input, data);
+		rcu_read_unlock();
+		break;
 	case STEAM_EV_INPUT_DATA:
 		if (steam->client_opened)
 			return 0;
+		/*pr_info("Event:\n");
+		for (size_t i = 8; i < 17; i++) {
+			pr_cont("%x,",data[i]);
+			if ((i+1) % 8 == 0)
+				pr_cont("\n");
+		}*/
 		rcu_read_lock();
 		input = rcu_dereference(steam->input);
 		if (likely(input))
@@ -1087,6 +1308,8 @@ static int steam_raw_event(struct hid_device *hdev,
 			rcu_read_unlock();
 		}
 		break;
+	default:
+		hid_info(hdev, "Default  event\n");
 	}
 	return 0;
 }
@@ -1125,6 +1348,10 @@ static const struct hid_device_id steam_controllers[] = {
 	{ /* Wired Steam Controller */
 	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
 		USB_DEVICE_ID_STEAM_CONTROLLER)
+	},
+	{ /* Wired Steam Deck Controller */
+	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
+		USB_DEVICE_ID_STEAM_DECK_CONTROLLER)
 	},
 	{ /* Wireless Steam Controller */
 	  HID_USB_DEVICE(USB_VENDOR_ID_VALVE,
