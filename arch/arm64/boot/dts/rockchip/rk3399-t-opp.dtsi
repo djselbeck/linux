@@ -2,10 +2,6 @@
 /*
  * Copyright (c) 2016-2017 Fuzhou Rockchip Electronics Co., Ltd
  * Copyright (c) 2022 Radxa Limited
-<<<<<<< HEAD
-=======
- * Copyright (c) 2022 Samuel Dionne-Riel <samuel@dionne-riel.com>
->>>>>>> 8bb0e660bb5f (DO NOT COPY: My working OPP values)
  */
 
 / {
@@ -15,23 +11,23 @@
 
 		opp00 {
 			opp-hz = /bits/ 64 <408000000>;
-			opp-microvolt = <800000 800000 900000>;
 			opp-microwatt = <50000>;
+			opp-microvolt = <875000 875000 1250000>;
 			clock-latency-ns = <40000>;
 		};
 		opp01 {
 			opp-hz = /bits/ 64 <600000000>;
-			opp-microvolt = <800000 800000 900000>;
+			opp-microvolt = <875000 875000 1250000>;
 			opp-microwatt = <80000>;
 		};
 		opp02 {
 			opp-hz = /bits/ 64 <816000000>;
-			opp-microvolt = <825000 825000 900000>;
+			opp-microvolt = <900000 900000 1250000>;
 			opp-microwatt = <110000>;
 		};
 		opp03 {
 			opp-hz = /bits/ 64 <1008000000>;
-			opp-microvolt = <875000 875000 900000>;
+			opp-microvolt = <975000 975000 1250000>;
 			opp-microwatt = <146000>;
 		};
 	};
@@ -42,41 +38,42 @@
 
 		opp00 {
 			opp-hz = /bits/ 64 <408000000>;
-			opp-microvolt = <825000 825000 925000>;
+			opp-microvolt = <875000 875000 1250000>;
 			clock-latency-ns = <40000>;
 			opp-microwatt = <180000>;
 			//opp-microwatt = <214000>;
 		};
 		opp01 {
 			opp-hz = /bits/ 64 <600000000>;
-			opp-microvolt = <825000 825000 950000>;
+			opp-microvolt = <875000 875000 1250000>;
 			opp-microwatt = <280000>;
 			//opp-microwatt = <315000>;
 		};
 		opp02 {
 			opp-hz = /bits/ 64 <816000000>;
-			opp-microvolt = <850000 850000 1000000>;
+			opp-microvolt = <875000 875000 1250000>;
 			opp-microwatt = <415000>;
 		};
 		opp03 {
 			opp-hz = /bits/ 64 <1008000000>;
-			opp-microvolt = <900000 900000 1025000>;
+			opp-microvolt = <925000 925000 1250000>;
 			opp-microwatt = <515000>;
 		};
 		opp04 {
 			opp-hz = /bits/ 64 <1200000000>;
-			opp-microvolt = <925000 925000 1025000>;
+			opp-microvolt = <1000000 1000000 1250000>;
 			opp-microwatt = <688000>;
 		};
 		opp05 {
 			opp-hz = /bits/ 64 <1416000000>;
-			opp-microvolt = <1000000 1000000 1050000>;
+			opp-microvolt = <1075000 1075000 1250000>;
 			opp-microwatt = <980000>;
 		};
-/*		opp06 {
-			opp-hz = /bits/ 64 <1500000000>;
-			opp-microvolt = <1075000 1075000 1125000>;
-		};*/
+		opp06 {
+			opp-hz = /bits/ 64 <1512000000>;
+			opp-microvolt = <1150000 1150000 1250000>;
+			opp-microwatt = <1200000>;
+		};
 	};
 
 	gpu_opp_table: opp-table-2 {
@@ -84,23 +81,19 @@
 
 		opp00 {
 			opp-hz = /bits/ 64 <200000000>;
-			opp-microvolt = <800000 800000 975000>;
+			opp-microvolt = <875000 875000 1150000>;
 		};
 		opp01 {
-			opp-hz = /bits/ 64 <297000000>;
-			opp-microvolt = <800000 800000 975000>;
+			opp-hz = /bits/ 64 <300000000>;
+			opp-microvolt = <875000 875000 1150000>;
 		};
 		opp02 {
 			opp-hz = /bits/ 64 <400000000>;
-			opp-microvolt = <800000 800000 975000>;
+			opp-microvolt = <875000 875000 1150000>;
 		};
 		opp03 {
-			opp-hz = /bits/ 64 <500000000>;
-			opp-microvolt = <850000 850000 975000>;
-		};
-		opp04 {
 			opp-hz = /bits/ 64 <600000000>;
-			opp-microvolt = <900000 900000 975000>;
+			opp-microvolt = <975000 975000 1150000>;
 		};
 	};
 };
